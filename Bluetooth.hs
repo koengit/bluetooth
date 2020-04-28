@@ -36,6 +36,10 @@ isWrite _         = False
 --------------------------------------------------------------------------------
 -- simple server (same as the simple Zephyr example)
 
+-- this server keeps track of a state (a String):
+-- - anyone can Write the String
+-- - anyone can Read the String
+
 -- example: server0 [Receive 1 (Write "apa"), Receive 2 Read]
 
 server0 :: Sig (Input Msg) -> Sig (Output String)
@@ -50,6 +54,10 @@ server0 inp =
 
 --------------------------------------------------------------------------------
 -- serving multiple agents independently
+
+-- this server keeps track of a state (a String) for each Agent separately:
+-- - anyone can Write their own String
+-- - anyone can Read their own String
 
 -- example: server [Receive 1 (Write "apa"), Receive 2 Read, Receive 1 Read]
 
@@ -68,6 +76,8 @@ server inp =
 m ? x = case M.lookup x m of
           Nothing -> ""
           Just s  -> s
+
+-- IFC question: Is it guaranteed that noone can read someone else's String?
 
 --------------------------------------------------------------------------------
 
