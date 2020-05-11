@@ -1,0 +1,23 @@
+
+
+Generic send and receive between two BLE devices
+
+Device A acts as a server and has 1 attribute with read, write and subscription privileges.
+Device B acts as a client.
+
+A (server) <---------->  B (client)
+
+Connection phase:
+  1: A announces it is there, while B scans for devices and connects to A when it is discovered.
+  2: B scans for the attribute A defined, and subscribes to it.
+
+Send and receive:
+  A: () send(msg) = notify subscribers of the attribute that the attribute has changed, and put msg as the payload.
+     msg recv()   = B has written to the attribute A defined.
+  B: () send(msg) = Submit a write request to the attribute defined by A.
+     msg recv()   = A has changed it's attribute and has notified subscribers, giving the msg as the notification payload.
+
+This way we can get the more generic send and receive primitives we might expect, and we can get around the 512
+byte payload limit by sending multiple messages and assembling them at the receiving end. We are (probably) deviating
+from how most BLE devices are programmed, and must accept that we will have to program the servers also, not just the
+clients.
