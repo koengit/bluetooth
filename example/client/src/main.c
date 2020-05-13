@@ -19,8 +19,13 @@
 #include <bluetooth/gatt.h>
 #include <sys/byteorder.h>
 
-#define BT_UUID_TEMP_SERVICE         BT_UUID_DECLARE_16(0xffaa)
-#define BT_UUID_TEMP_CHARACTERISTIC  BT_UUID_DECLARE_16(0xffbb)
+#define BT_UUID_DEVICE                             BT_UUID_DECLARE_16(0xffcc)
+
+#define BT_UUID_TEMPERATURE_SENSOR_SERVICE         BT_UUID_DECLARE_16(0xff11)
+#define BT_UUID_TEMPERATURE_SENSOR_CHARACTERISTIC  BT_UUID_DECLARE_16(0xff12)
+
+#define BT_UUID_OCTAVIUS_SERVICE                   BT_UUID_DECLARE_16(0xff21)
+#define BT_UUID_OCTAVIUS_CHARACTERISTIC            BT_UUID_DECLARE_16(0xff22)
 
 /*****************************************************/
 struct main_mem
@@ -60,7 +65,7 @@ static struct bt_uuid_16 uuid = BT_UUID_INIT_16(0);
 static struct bt_gatt_discover_params discover_params;
 static struct bt_gatt_subscribe_params subscribe_params;
 
-static u8_t notify_func(struct bt_conn *conn,
+static u8_t notify_temperature(struct bt_conn *conn,
 			   struct bt_gatt_subscribe_params *params,
 			   const void *data, u16_t length)
 {
@@ -70,13 +75,13 @@ static u8_t notify_func(struct bt_conn *conn,
 		return BT_GATT_ITER_STOP;
 	}
 	/* Message from temp/octavius */
-	struct payload* input = (struct payload*)data;
+	int* input = (int*) data;
 
 	printk("[NOTIFICATION] data %p length %u\n", data, length);
-	printk("[VALUE] temperature %u open door? %u\n", input->temperature, input->octavius);
+	printk("[VALUE] temperature %d\n", *input);
 
 	/***** Prepare to call Nachi's function *****/
-	func((int)input->temperature, (int)input->octavius);
+	func(*input, *input);
 	/********************************************/
 
 	return BT_GATT_ITER_CONTINUE;
@@ -96,8 +101,8 @@ static u8_t discover_func(struct bt_conn *conn,
 
 	printk("[ATTRIBUTE] handle %u\n", attr->handle);
 
-	if (!bt_uuid_cmp(discover_params.uuid, BT_UUID_TEMP_SERVICE)) {
-		memcpy(&uuid, BT_UUID_TEMP_CHARACTERISTIC, sizeof(uuid));
+	if (!bt_uuid_cmp(discover_params.uuid, BT_UUID_TEMPERATURE_SENSOR_SERVICE)) {
+		memcpy(&uuid, BT_UUID_TEMPERATURE_SENSOR_CHARACTERISTIC, sizeof(uuid));
 		discover_params.uuid = &uuid.uuid;
 		discover_params.start_handle = attr->handle + 1;
 		discover_params.type = BT_GATT_DISCOVER_CHARACTERISTIC;
@@ -107,7 +112,7 @@ static u8_t discover_func(struct bt_conn *conn,
 			printk("Discover failed (err %d)\n", err);
 		}
 	} else if (!bt_uuid_cmp(discover_params.uuid,
-				BT_UUID_TEMP_CHARACTERISTIC)) {
+				BT_UUID_TEMPERATURE_SENSOR_CHARACTERISTIC)) {
 		memcpy(&uuid, BT_UUID_GATT_CCC, sizeof(uuid));
 		discover_params.uuid = &uuid.uuid;
 		discover_params.start_handle = attr->handle + 2;
@@ -119,7 +124,7 @@ static u8_t discover_func(struct bt_conn *conn,
 			printk("Discover failed (err %d)\n", err);
 		}
 	} else {
-		subscribe_params.notify = notify_func;
+		subscribe_params.notify = notify_temperature;
 		subscribe_params.value = BT_GATT_CCC_NOTIFY;
 		subscribe_params.ccc_handle = attr->handle;
 
@@ -159,7 +164,7 @@ static bool eir_found(struct bt_data *data, void *user_data)
 
 			memcpy(&u16, &data->data[i], sizeof(u16));
 			uuid = BT_UUID_DECLARE_16(sys_le16_to_cpu(u16));
-			if (bt_uuid_cmp(uuid, BT_UUID_TEMP_SERVICE)) {
+			if (bt_uuid_cmp(uuid, BT_UUID_DEVICE)) {
 				continue;
 			}
 
@@ -241,7 +246,7 @@ static void connected(struct bt_conn *conn, u8_t conn_err)
 	printk("Connected: %s\n", addr);
 
 	if (conn == default_conn) {
-		memcpy(&uuid, BT_UUID_TEMP_SERVICE, sizeof(uuid));
+		memcpy(&uuid, BT_UUID_TEMPERATURE_SENSOR_SERVICE, sizeof(uuid));
 		discover_params.uuid = &uuid.uuid;
 		discover_params.func = discover_func;
 		discover_params.start_handle = 0x0001;
