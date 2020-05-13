@@ -62,8 +62,11 @@ struct payload {
 static struct bt_conn *default_conn;
 
 static struct bt_uuid_16 uuid = BT_UUID_INIT_16(0);
+static struct bt_uuid_16 oct_uuid = BT_UUID_INIT_16(0);
 static struct bt_gatt_discover_params discover_params;
+static struct bt_gatt_discover_params discover_oct_params;
 static struct bt_gatt_subscribe_params subscribe_params;
+static struct bt_gatt_subscribe_params subscribe_oct_params;
 
 static u8_t notify_temperature(struct bt_conn *conn,
 			   struct bt_gatt_subscribe_params *params,
@@ -87,7 +90,29 @@ static u8_t notify_temperature(struct bt_conn *conn,
 	return BT_GATT_ITER_CONTINUE;
 }
 
-static u8_t discover_func(struct bt_conn *conn,
+static u8_t notify_octavius(struct bt_conn *conn,
+			   struct bt_gatt_subscribe_params *params,
+			   const void *data, u16_t length)
+{
+	if (!data) {
+		printk("[UNSUBSCRIBED]\n");
+		params->value_handle = 0U;
+		return BT_GATT_ITER_STOP;
+	}
+	/* Message from temp/octavius */
+	int* input = (int*) data;
+
+	printk("[NOTIFICATION] data %p length %u\n", data, length);
+	printk("[VALUE] octavius %d\n", *input);
+
+	/***** Prepare to call Nachi's function *****/
+	func(*input, *input);
+	/********************************************/
+
+	return BT_GATT_ITER_CONTINUE;
+}
+
+static u8_t discover_temperature(struct bt_conn *conn,
 			     const struct bt_gatt_attr *attr,
 			     struct bt_gatt_discover_params *params)
 {
@@ -101,6 +126,10 @@ static u8_t discover_func(struct bt_conn *conn,
 
 	printk("[ATTRIBUTE] handle %u\n", attr->handle);
 
+	char uuidstr[64];
+	bt_uuid_to_str(attr->uuid, uuidstr, 64);
+	printk("found uuid was %s\n", uuidstr);
+
 	if (!bt_uuid_cmp(discover_params.uuid, BT_UUID_TEMPERATURE_SENSOR_SERVICE)) {
 		memcpy(&uuid, BT_UUID_TEMPERATURE_SENSOR_CHARACTERISTIC, sizeof(uuid));
 		discover_params.uuid = &uuid.uuid;
@@ -111,8 +140,7 @@ static u8_t discover_func(struct bt_conn *conn,
 		if (err) {
 			printk("Discover failed (err %d)\n", err);
 		}
-	} else if (!bt_uuid_cmp(discover_params.uuid,
-				BT_UUID_TEMPERATURE_SENSOR_CHARACTERISTIC)) {
+	} else if (!bt_uuid_cmp(discover_params.uuid, BT_UUID_TEMPERATURE_SENSOR_CHARACTERISTIC)) {
 		memcpy(&uuid, BT_UUID_GATT_CCC, sizeof(uuid));
 		discover_params.uuid = &uuid.uuid;
 		discover_params.start_handle = attr->handle + 2;
@@ -129,6 +157,59 @@ static u8_t discover_func(struct bt_conn *conn,
 		subscribe_params.ccc_handle = attr->handle;
 
 		err = bt_gatt_subscribe(conn, &subscribe_params);
+		if (err && err != -EALREADY) {
+			printk("Subscribe failed (err %d)\n", err);
+		} else {
+			printk("[SUBSCRIBED]\n");
+		}
+
+		return BT_GATT_ITER_STOP;
+	}
+
+	return BT_GATT_ITER_STOP;
+}
+
+static u8_t discover_octavius(struct bt_conn *conn,
+			     const struct bt_gatt_attr *attr,
+			     struct bt_gatt_discover_params *params)
+{
+	int err;
+
+	if (!attr) {
+		printk("Discover complete\n");
+		(void)memset(params, 0, sizeof(*params));
+		return BT_GATT_ITER_STOP;
+	}
+
+	printk("[ATTRIBUTE] handle %u\n", attr->handle);
+
+	if (!bt_uuid_cmp(discover_oct_params.uuid, BT_UUID_OCTAVIUS_SERVICE)) {
+		memcpy(&oct_uuid, BT_UUID_OCTAVIUS_CHARACTERISTIC, sizeof(uuid));
+		discover_oct_params.uuid = &oct_uuid.uuid;
+		discover_oct_params.start_handle = attr->handle + 1;
+		discover_oct_params.type = BT_GATT_DISCOVER_CHARACTERISTIC;
+
+		err = bt_gatt_discover(conn, &discover_oct_params);
+		if (err) {
+			printk("Discover failed (err %d)\n", err);
+		}
+	} else if (!bt_uuid_cmp(discover_oct_params.uuid, BT_UUID_OCTAVIUS_CHARACTERISTIC)) {
+		memcpy(&oct_uuid, BT_UUID_GATT_CCC, sizeof(uuid));
+		discover_oct_params.uuid = &oct_uuid.uuid;
+		discover_oct_params.start_handle = attr->handle + 2;
+		discover_oct_params.type = BT_GATT_DISCOVER_DESCRIPTOR;
+		subscribe_oct_params.value_handle = bt_gatt_attr_value_handle(attr);
+
+		err = bt_gatt_discover(conn, &discover_oct_params);
+		if (err) {
+			printk("Discover failed (err %d)\n", err);
+		}
+	} else {
+		subscribe_oct_params.notify = notify_octavius;
+		subscribe_oct_params.value = BT_GATT_CCC_NOTIFY;
+		subscribe_oct_params.ccc_handle = attr->handle;
+
+		err = bt_gatt_subscribe(conn, &subscribe_oct_params);
 		if (err && err != -EALREADY) {
 			printk("Subscribe failed (err %d)\n", err);
 		} else {
@@ -246,9 +327,24 @@ static void connected(struct bt_conn *conn, u8_t conn_err)
 	printk("Connected: %s\n", addr);
 
 	if (conn == default_conn) {
+		printk("Initiating scan for the octavius service\n");
+		memcpy(&oct_uuid, BT_UUID_OCTAVIUS_SERVICE, sizeof(uuid));
+		discover_oct_params.uuid = &oct_uuid.uuid;
+		discover_oct_params.func = discover_octavius;
+		discover_oct_params.start_handle = 0x0001;
+		discover_oct_params.end_handle = 0xffff;
+		discover_oct_params.type = BT_GATT_DISCOVER_PRIMARY;
+
+		err = bt_gatt_discover(default_conn, &discover_oct_params);
+		if (err) {
+			printk("Discover failed(err %d)\n", err);
+			return;
+		}
+
+		printk("Initiating scan for the temperature service\n");
 		memcpy(&uuid, BT_UUID_TEMPERATURE_SENSOR_SERVICE, sizeof(uuid));
 		discover_params.uuid = &uuid.uuid;
-		discover_params.func = discover_func;
+		discover_params.func = discover_temperature;
 		discover_params.start_handle = 0x0001;
 		discover_params.end_handle = 0xffff;
 		discover_params.type = BT_GATT_DISCOVER_PRIMARY;
@@ -258,6 +354,7 @@ static void connected(struct bt_conn *conn, u8_t conn_err)
 			printk("Discover failed(err %d)\n", err);
 			return;
 		}
+		
 	}
 }
 
