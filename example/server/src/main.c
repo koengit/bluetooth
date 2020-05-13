@@ -69,7 +69,7 @@ static void temperature_notify(void)
 	current -= 1;
 
 	if (!current) {
-		current = 100;
+		current = 35;
 	}
 
 	bt_gatt_set_temperature(current);
@@ -187,6 +187,8 @@ static struct bt_conn_auth_cb auth_cb_display = {
 
 void main(void)
 {
+	temperature = 35;
+	octavius = 1;
 	int err;
 
 	err = bt_enable(NULL);
