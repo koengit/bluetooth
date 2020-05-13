@@ -20,23 +20,16 @@
 #include <bluetooth/uuid.h>
 #include <bluetooth/gatt.h>
 
-#define BT_UUID_TEMP                 BT_UUID_DECLARE_16(0xffcc)
-#define BT_UUID_TEMP_SERVICE         BT_UUID_DECLARE_16(0xffaa)
-#define BT_UUID_TEMP_CHARACTERISTIC  BT_UUID_DECLARE_16(0xffbb)
+#define BT_UUID_DEVICE                             BT_UUID_DECLARE_16(0xffcc)
+
+#define BT_UUID_TEMPERATURE_SENSOR_SERVICE         BT_UUID_DECLARE_16(0xff11)
+#define BT_UUID_TEMPERATURE_SENSOR_CHARACTERISTIC  BT_UUID_DECLARE_16(0xff12)
+
+#define BT_UUID_OCTAVIUS_SERVICE                   BT_UUID_DECLARE_16(0xff21)
+#define BT_UUID_OCTAVIUS_CHARACTERISTIC            BT_UUID_DECLARE_16(0xff22)
 
 /*********************************/
-struct payload {
-  u8_t temperature;
-  u8_t octavius;
-};
-
-static struct payload data = {.temperature = 30, .octavius = 1};
-static ssize_t read_data(struct bt_conn* conn, const struct bt_gatt_attr *attr, void *buf, u16_t len, u16_t offset) {
-	struct payload outp = data;
-
-	return bt_gatt_attr_read(conn, attr, buf, len, offset, &outp,
-				 sizeof(outp));
-}
+int temperature;
 
 static void tempoct_ccc_cfg_changed(const struct bt_gatt_attr *attr,
 				       u16_t value)
@@ -45,37 +38,97 @@ static void tempoct_ccc_cfg_changed(const struct bt_gatt_attr *attr,
 
 	bool notif_enabled = (value == BT_GATT_CCC_NOTIFY);
 
-	printk("BAS Notifications %s\n", notif_enabled ? "enabled" : "disabled");
+	printk("Temperature Notifications %s\n", notif_enabled ? "enabled" : "disabled");
 }
 
-BT_GATT_SERVICE_DEFINE(bas,
-	BT_GATT_PRIMARY_SERVICE(BT_UUID_TEMP_SERVICE),
-	BT_GATT_CHARACTERISTIC(BT_UUID_TEMP_CHARACTERISTIC,
+static ssize_t read_temperature(struct bt_conn* conn, const struct bt_gatt_attr *attr, void *buf, u16_t len, u16_t offset) {
+	return bt_gatt_attr_read(conn, attr, buf, len, offset, &temperature, sizeof(temperature));
+}
+
+BT_GATT_SERVICE_DEFINE(temp,
+	BT_GATT_PRIMARY_SERVICE(BT_UUID_TEMPERATURE_SENSOR_SERVICE),
+	BT_GATT_CHARACTERISTIC(BT_UUID_TEMPERATURE_SENSOR_CHARACTERISTIC,
 			       BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, // it can be read from and subscribed to
-			       BT_GATT_PERM_READ, read_data, NULL,
-			       &data),
+			       BT_GATT_PERM_READ, read_temperature, NULL,
+			       &temperature),
 	BT_GATT_CCC(tempoct_ccc_cfg_changed,
 		    BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 );
 
-struct payload bt_gatt_get_temp_oct_data(void)
-{
-	return data;
-}
-int bt_gatt_set_temp_oct_data(struct payload input)
-{
-	data = input;
+int bt_gatt_get_temperature(void) { return temperature; }
 
-	int rc = bt_gatt_notify(NULL, &bas.attrs[1], &input, sizeof(input));
-
-	return rc == -ENOTCONN ? 0 : rc;
+int bt_gatt_set_temperature(int new_temperature) {
+    temperature = new_temperature;
+    int rc = bt_gatt_notify(NULL, &temp.attrs[1], &new_temperature, sizeof(new_temperature));
+    return rc == -ENOTCONN ? 0 : rc;
 }
 
-/***************************************************************************************/
+static void temperature_notify(void)
+{
+	int current = bt_gatt_get_temperature();
+	current -= 1;
+
+	if (!current) {
+		current = 100;
+	}
+
+	bt_gatt_set_temperature(current);
+}
+
+/********** Octavius sensor **********/
+int octavius;
+
+static void tempoct2_ccc_cfg_changed(const struct bt_gatt_attr *attr,
+				       u16_t value)
+{
+	ARG_UNUSED(attr);
+
+	bool notif_enabled = (value == BT_GATT_CCC_NOTIFY);
+
+	printk("Octavius Notifications %s\n", notif_enabled ? "enabled" : "disabled");
+}
+
+static ssize_t read_octavius(struct bt_conn* conn, const struct bt_gatt_attr *attr, void *buf, u16_t len, u16_t offset) {
+	return bt_gatt_attr_read(conn, attr, buf, len, offset, &octavius, sizeof(octavius));
+}
+
+BT_GATT_SERVICE_DEFINE(oct,
+	BT_GATT_PRIMARY_SERVICE(BT_UUID_OCTAVIUS_SERVICE),
+	BT_GATT_CHARACTERISTIC(BT_UUID_OCTAVIUS_CHARACTERISTIC,
+			       BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, // it can be read from and subscribed to
+			       BT_GATT_PERM_READ, read_octavius, NULL,
+			       &octavius),
+	BT_GATT_CCC(tempoct2_ccc_cfg_changed,
+		    BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+);
+
+int bt_gatt_get_octavius(void) { return octavius; }
+
+int bt_gatt_set_octavius(int new_octavius) {
+    octavius = new_octavius;
+    int rc = bt_gatt_notify(NULL, &oct.attrs[1], &new_octavius, sizeof(new_octavius));
+    return rc == -ENOTCONN ? 0 : rc;
+}
+
+static void octavius_notify(void)
+{
+	int current = bt_gatt_get_octavius();
+
+	if (!current) {
+            current = 1;
+	} else {
+            current = 0;
+        }
+
+	bt_gatt_set_octavius(current);
+}
+/*************************************/
+
 struct bt_conn *default_conn;
 
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+	// 0xcc & 0xff here is the device UUID defined at the top
 	BT_DATA_BYTES(BT_DATA_UUID16_ALL, 0xcc, 0xff, 0xaa, 0xff, 0x0a, 0x18),
 };
 
@@ -132,18 +185,6 @@ static struct bt_conn_auth_cb auth_cb_display = {
 	.cancel = auth_cancel,
 };
 
-static void bas_notify(void)
-{
-	struct payload current = bt_gatt_get_temp_oct_data();
-	current.temperature--;
-
-	if (!current.temperature) {
-		current.temperature = 100U;
-	}
-
-	bt_gatt_set_temp_oct_data(current);
-}
-
 void main(void)
 {
 	int err;
@@ -164,8 +205,9 @@ void main(void)
 	 */
 	while (1) {
 		k_sleep(K_SECONDS(1));
+                temperature_notify();
 
-		/* Battery level simulation */
-		bas_notify();
+		k_sleep(K_SECONDS(1));
+		octavius_notify();
 	}
 }
