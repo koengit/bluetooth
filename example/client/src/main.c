@@ -54,68 +54,66 @@ int func(int temp, int door) {
 }
 /*****************************************************/
 
-struct payload {
-  u8_t temperature;
-  u8_t octavius;
-};
-
 static struct bt_conn *default_conn;
 
+/* These two UUIDs are used for scanning for the two different services */
 static struct bt_uuid_16 uuid = BT_UUID_INIT_16(0);
 static struct bt_uuid_16 oct_uuid = BT_UUID_INIT_16(0);
+
+/* These fields are used to configure the service/characteristic discovery,
+ * one a connection to the remote server has been established. */
 static struct bt_gatt_discover_params discover_params;
 static struct bt_gatt_discover_params discover_oct_params;
 static struct bt_gatt_subscribe_params subscribe_params;
 static struct bt_gatt_subscribe_params subscribe_oct_params;
 
 static u8_t notify_temperature(struct bt_conn *conn,
-			   struct bt_gatt_subscribe_params *params,
-			   const void *data, u16_t length)
-{
-	if (!data) {
-		printk("[UNSUBSCRIBED]\n");
-		params->value_handle = 0U;
-		return BT_GATT_ITER_STOP;
-	}
-	/* Message from temp/octavius */
+                               struct bt_gatt_subscribe_params *params,
+                               const void *data, u16_t length) {
+    if (!data) {
+        printk("[UNSUBSCRIBED]\n");
+        params->value_handle = 0U;
+        return BT_GATT_ITER_STOP;
+    }
+
 	int* input = (int*) data;
 
 	printk("[NOTIFICATION] data %p length %u\n", data, length);
 	printk("[VALUE] temperature %d\n", *input);
 
 	/***** Prepare to call Nachi's function *****/
-	func(*input, *input);
+	/* 0 for door indicates N/A */
+	func(*input, 0);
 	/********************************************/
 
 	return BT_GATT_ITER_CONTINUE;
 }
 
 static u8_t notify_octavius(struct bt_conn *conn,
-			   struct bt_gatt_subscribe_params *params,
-			   const void *data, u16_t length)
-{
+                            struct bt_gatt_subscribe_params *params,
+                            const void *data, u16_t length) {
 	if (!data) {
 		printk("[UNSUBSCRIBED]\n");
 		params->value_handle = 0U;
 		return BT_GATT_ITER_STOP;
 	}
-	/* Message from temp/octavius */
+
 	int* input = (int*) data;
 
 	printk("[NOTIFICATION] data %p length %u\n", data, length);
 	printk("[VALUE] octavius %d\n", *input);
 
 	/***** Prepare to call Nachi's function *****/
-	func(*input, *input);
+	/* -273 indicates N/A */
+	func(-273, (*input) + 1);
 	/********************************************/
 
 	return BT_GATT_ITER_CONTINUE;
 }
 
 static u8_t discover_temperature(struct bt_conn *conn,
-			     const struct bt_gatt_attr *attr,
-			     struct bt_gatt_discover_params *params)
-{
+                                 const struct bt_gatt_attr *attr,
+                                 struct bt_gatt_discover_params *params) {
 	int err;
 
 	if (!attr) {

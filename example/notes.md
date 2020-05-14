@@ -3,6 +3,21 @@ Bluetooth (BT) is a wireless technology that specifies how data can be transmitt
 
 Battery life is increased by having BLE spend most of its time asleep, waiting for connections.
 
+There are three layers to the BLE stack:
+
+GATT, GAP etc. Just below the application layer. Communicates with the Control layer via the Host Controller Interface (HCI).  
+\--------------------      
+| Host layer  |           
+\--------------------
+
+This is the link layer. It knows how to communicate with the underlying hardware.  
+\------------------------       
+| Control layer |              
+\------------------------
+
+\-----------------------------  
+| Radio hardware |  
+\-----------------------------
 ## How does BLE organise user data? ##
 The Generic Attribute Profile (GATT) describes in detail how all user data is exchanged over a BLE connection. Conceptually related pieces of information, called characteristics, are organised by services. A biometrics service might expose two characteristics, your heart rate and your pulse. These values are defined as two distinct _characteristics_ which belong to the biometrics _service_.
 
@@ -42,7 +57,7 @@ Both the remote server and the Alexa (which is a GATT client) have agreed on a f
 #define BT_UUID_OCTAVIUS_CHARACTERISTIC            BT_UUID_DECLARE_16(0xff22)
 ```
 
-When the GATT client, the Alexa, is started, it begins by synchronously activating the BLE hardware by calling `bt_enable(NULL);`. After this, it will install two callbacks which are invoked when connections are established or broken.
+When the GATT client, the Alexa, is started, it begins by synchronously activating the BLE hardware by calling `bt_enable(NULL);`. This can be done asynchronously by replacing `NULL` with a callback to be invoked when the hardware is started. After this, it will install two callbacks which are invoked when connections are established or broken.
 
 ```c
 static void connected(struct bt_conn *conn, u8_t conn_err){...}
@@ -70,7 +85,7 @@ static void start_scan(void){
     ...
 }
 ```
-Device found is a function reference. This function will be called when a device has been found through scanning.
+Device found is a function reference. This function will be called when a device has been found through scanning. There are many types which are not properly documented, but the Zephyr examples agreed that these two types indicate a device that can be connected to.
 ```c
 static void device_found(const bt_addr_le_t *addr, s8_t rssi, u8_t type, struct net_buf_simple *ad) {
     ...
@@ -121,6 +136,8 @@ static bool eir_found(struct bt_data *data, void *user_data) {
 }
 ```
 At this point we have initiated a connection and the callback we registered earlier is invoked. This callback is going to design two sets of service discovery parameters. One is configured to search for the temperature sensor service and the other for the octavius permission service. It knows what to look for by specifying which UUIDs the services are registered with on the server.
+
+The `bt_gatt_discover` function is asynchronous and expects the discovery parameter object to be valid until discovery is complete.
 ```c
 static void connected(struct bt_conn *conn, u8_t conn_err) {
     ....
@@ -212,7 +229,10 @@ static u8_t notify_octavius(struct bt_conn *conn, struct bt_gatt_subscribe_param
     ...
 
     /***** Prepare to call Nachi's function *****/
-    func(/* Some dummy skip value */, *input);
+    /* -273 in the temperature field indicates N/A. Nachi said that
+     * his code would handle this, and in the future when Maybe types are added that
+     * will look something like struct maybe { void* data; bool valid; }. */
+    func(-273, *input);
     /********************************************/
 
     return BT_GATT_ITER_CONTINUE;
