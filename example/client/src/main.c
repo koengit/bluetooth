@@ -13,6 +13,7 @@ void disconnected(int id) {
 void main() {
     start_bt();
     register_connected_callback(connected);
+    register_disconnected_callback(disconnected);
     try_connect(0xffcc);
 }
 

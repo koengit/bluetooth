@@ -20,6 +20,7 @@
 #include <sys/byteorder.h>
 
 #include "api.h"
+#include "stack.h"
 
 #define MAX_CONNECTIONS 5
 
@@ -81,8 +82,9 @@ int get_key(struct bt_conn* conn) {
     return res;
 }
 /*********************************************/
-int target;
-int target_key;
+static int target;
+static int target_key;
+struct bt_uuid* t;
 
 static bool eir_found(struct bt_data *data, void *user_data)
 {
@@ -110,6 +112,8 @@ static bool eir_found(struct bt_data *data, void *user_data)
 			if (bt_uuid_cmp(uuid, BT_UUID_DECLARE_16(target))) {
 				continue;
 			}
+			printk("Val from desired device:    %d\n", (int)BT_UUID_16(t)->val);
+			printk("The uuid is: %d\n", target);
 
 			err = bt_le_scan_stop();
 			if (err) {
@@ -138,6 +142,8 @@ static void device_found(const bt_addr_le_t *addr, s8_t rssi, u8_t type,
 	bt_addr_le_to_str(addr, dev, sizeof(dev));
 	printk("[DEVICE]: %s, AD evt type %u, AD data len %u, RSSI %i\n",
 	       dev, type, ad->len, rssi);
+//	k_tid_t id = k_current_get();
+//	printk("%d\n", id);
 
 	/* We're only interested in connectable events */
 	if (type == BT_GAP_ADV_TYPE_ADV_IND ||
@@ -150,6 +156,8 @@ void try_connect(int uuid_in_hex) {
     int err;
     target = uuid_in_hex;
     target_key = get_slot();
+    t = BT_UUID_DECLARE_16(uuid_in_hex);
+    printk("Just before scan starts t has uuid: %d\n", (int)BT_UUID_16(t)->val);
 
     struct bt_le_scan_param scan_param = {
 	.type       = BT_LE_SCAN_TYPE_ACTIVE,
@@ -239,4 +247,5 @@ void start_bt(void)
 	printk("Bluetooth initialized\n");
 
 	bt_conn_cb_register(&conn_callbacks);
+	struct stack* stack;
 }

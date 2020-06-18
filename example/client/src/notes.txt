@@ -1,0 +1,71 @@
+
+To identify and connect to a device we need the:
+  * device UUID
+
+When we want to connect to a known UUID we should
+  1 Start scanning
+  2 Reject remote devices until we find one with the correct UUID
+  3 Establish a connection
+
+To subscribe to a value we first need to discover it. To do this we need the
+  * Service UUID
+  * Characteristic UUID
+
+## Wierd thing \#1 ##
+Declaring a device ID like this works fine.
+#define BT_UUID_DEVICE BT_UUID_DECLARE_16(0xffcc)
+
+We can now use this when we search for a specific device to connect to!
+memcpy(&u16, &data->data[i], sizeof(u16));
+uuid = BT_UUID_DECLARE_16(sys_le16_to_cpu(u16));
+if (bt_uuid_cmp(uuid, BT_UUID_DEVICE)) {
+	continue;
+}
+
+Great. Now, let's generalise. We want to be able to search for many different ID's, not just a hardcoded one.
+Make a new scan-entry point.
+void try_connect(int uuid_in_hex) {
+    int err;
+    target = BT_UUID_DECLARE_16(target);
+    target_key = get_slot();
+
+    struct bt_le_scan_param scan_param = {
+	.type       = BT_LE_SCAN_TYPE_ACTIVE,
+	.options    = BT_LE_SCAN_OPT_NONE,
+	.interval   = BT_GAP_SCAN_FAST_INTERVAL,
+	.window     = BT_GAP_SCAN_FAST_WINDOW,
+    };
+
+    err = bt_le_scan_start(&scan_param, device_found);
+    if(err) {
+        printk("Scanning failed to start (err %d)\n", err);
+	target = -1;
+	return;
+    }
+    printk("Scanning successfully started\n");
+}
+
+Now we get the desired UUID as an integer instead. We have declared a global variable struct bt_uuid* target which we assign the value of the UUID.
+Device found will be invoked when a device has announced itself. After a brief sanity check device found will issue a parse request of the advertised data, which in turn will call another function (the one the if from above was taken from). Now, we want to make sure that this function will try to find the proper device. We change the line above to use target instead.
+
+memcpy(&u16, &data->data[i], sizeof(u16));
+uuid = BT_UUID_DECLARE_16(sys_le16_to_cpu(u16));
+if (bt_uuid_cmp(uuid, target)) {
+	continue;
+}
+
+For some as of yet unknown reason, this does not work! They will never be equal. Stranger still is that if we change it to this, it will work.
+memcpy(&u16, &data->data[i], sizeof(u16));
+uuid = BT_UUID_DECLARE_16(sys_le16_to_cpu(u16));
+if (bt_uuid_cmp(uuid, BT_UUID_DECLARE_16(target))) {
+	continue;
+}
+This is ofcourse assuming that target is now the integer instead. WHY does not this work? Surely they are the same? After all, we do struct bt_uuid* = BT_UUID_DECLARE_16(target) instead, and we don't assign a new value anywhere. Clearly C is not referentially transparent (but we already knew that).
+
+We can print the ID (or something unique) for the current thread by running this piece of code.
+k_tid_t id = k_current_get();
+printk("%d\n", id);
+
+If we do this just before we start to scan (when the value is OK) we get one thread id. Running the same statements in the device found callback gives us ANOTHER id! So there are two different threads here, one main thread and the callback thread. Printing the uuid value in the callback thread tells us that it is 0, while in the main thread it has the value we would expect it to have. This is really wierd, it is as if the second thread does not share the global variable, but rather gets its own, uninitialised copy.
+
+Wierdest of everything: IT WORKS WITH INTEGERS! Just changing the type of target to an int makes it work, as illustrated above. Why?
