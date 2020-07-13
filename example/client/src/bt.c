@@ -85,14 +85,6 @@ static struct bt_uuid_16 uuid = BT_UUID_INIT_16(0);
 static struct bt_gatt_discover_params* discover_parameters;
 static struct bt_gatt_subscribe_params* subscribe_parameters;
 
-void reset_scan() {
-    service_uuid         = 0;
-    characteristic_uuid  = 0;
-    scancb               = NULL;
-    discover_parameters  = NULL;
-    subscribe_parameters = NULL;
-}
-
 static u8_t characteristic_found(struct bt_conn* conn,
 		                 const struct bt_gatt_attr* attr,
 				 struct bt_gatt_discover_params* params) { 
@@ -104,7 +96,6 @@ static u8_t characteristic_found(struct bt_conn* conn,
     printk("[ATTRIBUTE] handle %u\n", attr->handle);
 
     if(!bt_uuid_cmp(params->uuid, BT_UUID_DECLARE_16(service_uuid))) {
-        printk("We found the service\n");
 	struct bt_gatt_service_val* serv = attr->user_data;
         memcpy(&uuid, BT_UUID_DECLARE_16(characteristic_uuid), sizeof(uuid));
 	discover_parameters->uuid = &uuid.uuid;
@@ -114,7 +105,6 @@ static u8_t characteristic_found(struct bt_conn* conn,
 
 	bt_gatt_discover(conn, discover_parameters);
     } else if(!bt_uuid_cmp(params->uuid, BT_UUID_DECLARE_16(characteristic_uuid))) {
-        printk("We found the characteristic\n");
         memcpy(&uuid, BT_UUID_GATT_CCC, sizeof(uuid));
 	discover_parameters->uuid = &uuid.uuid;
 	discover_parameters->start_handle = attr->handle + 2;
@@ -123,7 +113,6 @@ static u8_t characteristic_found(struct bt_conn* conn,
 
 	bt_gatt_discover(conn, discover_parameters);
     } else {
-        printk("We found the descriptor\n");
 	subscribe_parameters->value = BT_GATT_CCC_NOTIFY;
 	subscribe_parameters->ccc_handle = attr->handle;
 
@@ -138,7 +127,6 @@ static u8_t characteristic_found(struct bt_conn* conn,
 	if(scancb) {
             scancb(val);
 	}
-	reset_scan();
 
 	return BT_GATT_ITER_STOP;
     }
@@ -149,7 +137,6 @@ void scan_for_characteristic(struct conn* conn, int service_in_hex, int characte
     service_uuid = service_in_hex;
     characteristic_uuid = characteristic_in_hex;
     scancb = cb;
-    printk("Starting to scan for service %d and characteristic %d\n", service_in_hex, characteristic_in_hex);
 
     struct bt_gatt_discover_params* params = k_malloc(sizeof(struct bt_gatt_discover_params));
     memcpy(&uuid, BT_UUID_DECLARE_16(service_uuid), sizeof(uuid));
@@ -175,7 +162,7 @@ struct callback {
 };
 
 struct node {
-    struct callback* data;
+    void* data;
     struct node* next;
 };
 
@@ -196,6 +183,43 @@ subscribed_cb* find_callback(struct bt_conn* conn, struct bt_gatt_subscribe_para
     return res;
 }
 
+void delete_callback(struct conn* connection, struct value* val) {
+    struct bt_conn* conn = get_conn(connection->key);
+
+    struct node* cbs = callbacks;
+    if(cbs) {
+        struct callback* cb = cbs->data;
+	if(cb->conn == conn && cb->value->characteristic_handle == val->characteristic_handle) {
+            struct node* n = cbs;
+	    cbs = cbs->next;
+	    k_free(cb);
+	    k_free(n);
+	    callbacks = cbs;
+	}
+    } else if(!cbs) {
+        // No callback registered, nothing to unsubscribe
+	return;
+    } else {
+        while(cbs) {
+	    struct node* next_n = cbs->next;
+            struct callback* next_cb = next_n->data;
+            if(next_n && next_cb->conn == conn && next_cb->value->characteristic_handle == val->characteristic_handle) {
+                cbs->next = cbs->next->next;
+		k_free(next_cb);
+		k_free(next_n);
+		return;
+	    }
+	    cbs = next_n;
+        }
+    }
+}
+
+void insert_vallback2(struct node* list, void* buf) {
+    if(!(*list).data) {
+        
+    }
+}
+
 void insert_callback(struct callback* cb) {
     struct node* new = (struct node*) k_malloc(sizeof(struct node));
     new->data = cb;
@@ -214,10 +238,10 @@ void insert_callback(struct callback* cb) {
 
 static u8_t global_callback(struct bt_conn* conn, struct bt_gatt_subscribe_params* params, const void* data, u16_t length) {
     subscribed_cb* cb = find_callback(conn, params);
-    if(cb) {
+    if(cb && data) {
         (*cb)(data, length);
     } else {
-        printk("An error ocurred - received notification without a registered callback function\n");
+        printk("An error ocurred - received notification without a registered callback function or data is NULL\n");
     }
     return BT_GATT_ITER_CONTINUE;
 }
@@ -231,7 +255,10 @@ int subscribe_characteristic(struct conn* connection, struct value* val, subscri
         callback->conn = conn;
         callback->value = val;
 
-	int err = bt_gatt_subscribe(conn, val->subscribe_params);
+	struct bt_gatt_subscribe_params* params = val->subscribe_params;
+	params->notify = global_callback;
+
+	int err = bt_gatt_subscribe(conn, params);
 	if(err && err != -EALREADY) {
             printk("Subscribe failed\n");
 	    k_free(callback);
@@ -245,6 +272,20 @@ int subscribe_characteristic(struct conn* connection, struct value* val, subscri
         printk("The connection does not exist\n");
 	return 1;
     }
+}
+
+int unsubscribe_characteristic(struct conn* connection, struct value* val) {
+    struct bt_conn* conn = get_conn(connection->key);
+    struct bt_gatt_subscribe_params* params = val->subscribe_params;
+
+    delete_callback(connection, val);
+    int err = bt_gatt_unsubscribe(conn, params);
+
+    if(err) {
+        printk("Ubsubscribe failed\n");
+        return 1;
+    } 
+    return 0;
 }
 
 /*********************************************/

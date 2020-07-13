@@ -36,5 +36,5 @@ void scan_for_characteristic(struct conn* conn, int service_in_hex, int characte
 
 
 typedef void(subscribed_cb)(const void* buf, int len); // should probably (definitely) be u16_t
-/*int subscribe_characteristic(struct value* val, subscribed_cb cb);
-int ubsubscribe_characteristic(struct value* val) */
+int subscribe_characteristic(struct conn* connection, struct value* val, subscribed_cb cb);
+int unsubscribe_characteristic(struct conn* connection, struct value* val);
