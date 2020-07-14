@@ -66,45 +66,32 @@ int func(int temp, int door) {
 }
 /********************/
 
-struct conn* conn;
-struct value* vall;
-int i = 0;
-
 void subscribe_temperature(const void* buf, int len) {
     int* input = (int*) buf;
-    //int x = blexa_step(main_mem, *input, 0);
     func(*input, 0);
-}
-
-void scanned_cb2(struct value* val) {
-    printk("Scan callback 2 was invoked!\n");
-    subscribe_characteristic(conn, val, subscribe_temperature);
+    //int x = blexa_step(main_mem, *input, 0);
 }
 
 void subscribe_octavius(const void* buf, int len) {
     int* input = (int*) buf;
     func(-273, (*input) + 1);
-    if(i > 10) {
-        unsubscribe_characteristic(conn, vall);
-        unsubscribe_characteristic(conn, vall);
-    } else {
-        printk("i = %d\n", i);
-        i++;
-    }
     //int x = blexa_step(main_mem, -273, (*input) + 1);
+}
+
+void scanned_cb2(struct value* val) {
+    printk("Scan callback 2 was invoked!\n");
+    subscribe_characteristic(val, subscribe_temperature);
 }
 
 void scanned_cb(struct value* val) {
     printk("Scan callback was invoked!\n");
-    vall = val;
-    subscribe_characteristic(conn, val, subscribe_octavius);
+    subscribe_characteristic(val, subscribe_octavius);
 }
 
 void connected(struct conn* id) {
-    conn = id;
     printk("Just connected, it got ID: %d\n", id->key);
     scan_for_characteristic(id, 0xff21, 0xff22, scanned_cb);
-    scan_for_characteristic(conn, 0xff11, 0xff12, scanned_cb2);
+    scan_for_characteristic(id, 0xff11, 0xff12, scanned_cb2);
 }
 
 void disconnected(struct conn* id) {

@@ -201,6 +201,7 @@ static u8_t characteristic_found(struct bt_conn* conn,
 	val->service_uuid          = target->service_uuid;
 	val->characteristic_uuid   = target->characteristic_uuid;
 	val->characteristic_handle = target->subscribe_parameters->value_handle;
+	val->conn                  = conn;
 	val->subscribe_params      = (void*)target->subscribe_parameters;
 	if(target->scancb) {
             (target->scancb)(val);
@@ -261,8 +262,8 @@ subscribed_cb* find_callback(struct bt_conn* conn, struct bt_gatt_subscribe_para
     return res;
 }
 
-void delete_callback(struct conn* connection, struct value* val) {
-    struct bt_conn* conn = get_conn(connection->key);
+void delete_callback(struct value* val) {
+    struct bt_conn* conn = val->conn;
 
     struct node* cbs = callbacks;
     if(cbs) {
@@ -318,8 +319,8 @@ static u8_t global_callback(struct bt_conn* conn, struct bt_gatt_subscribe_param
     return BT_GATT_ITER_CONTINUE;
 }
 
-int subscribe_characteristic(struct conn* connection, struct value* val, subscribed_cb cb) {
-    struct bt_conn* conn = get_conn(connection->key);
+int subscribe_characteristic(struct value* val, subscribed_cb cb) {
+    struct bt_conn* conn = val->conn;
 
     if(conn) {
         struct callback* callback = (struct callback*) k_malloc(sizeof(struct callback));
@@ -346,11 +347,11 @@ int subscribe_characteristic(struct conn* connection, struct value* val, subscri
     }
 }
 
-int unsubscribe_characteristic(struct conn* connection, struct value* val) {
-    struct bt_conn* conn = get_conn(connection->key);
+int unsubscribe_characteristic(struct value* val) {
+    struct bt_conn* conn = val->conn;
     struct bt_gatt_subscribe_params* params = val->subscribe_params;
 
-    delete_callback(connection, val);
+    delete_callback(val);
 
     int err = bt_gatt_unsubscribe(conn, params);
 
