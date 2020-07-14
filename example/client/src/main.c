@@ -3,8 +3,6 @@
 #include <sys/printk.h>
 #include <zephyr.h>
 
-#include "list.h"
-
 /********************/
 struct blexa_mem
 { int l;
@@ -87,6 +85,7 @@ void subscribe_octavius(const void* buf, int len) {
     int* input = (int*) buf;
     func(-273, (*input) + 1);
     if(i > 10) {
+        unsubscribe_characteristic(conn, vall);
         unsubscribe_characteristic(conn, vall);
     } else {
         printk("i = %d\n", i);

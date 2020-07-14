@@ -21,7 +21,6 @@
 
 #include "api.h"
 #include "stack.h"
-#include "list.h"
 
 #define MAX_CONNECTIONS 5
 
