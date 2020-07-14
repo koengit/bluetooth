@@ -32,6 +32,11 @@
 #define BT_UUID_OCTAVIUS_SERVICE                   BT_UUID_DECLARE_16(0xff21)
 #define BT_UUID_OCTAVIUS_CHARACTERISTIC            BT_UUID_DECLARE_16(0xff22)
 
+struct node {
+    void* data;
+    struct node* next;
+};
+
 /*********** Connection management ***********/
 struct stack* stack;
 struct bt_conn* conns[MAX_CONNECTIONS];
@@ -78,12 +83,84 @@ void recycle_key(int key) {
 }
 /*********************************************/
 
-static int service_uuid;
-static int characteristic_uuid;
-static scan_cb scancb;
-static struct bt_uuid_16 uuid = BT_UUID_INIT_16(0);
-static struct bt_gatt_discover_params* discover_parameters;
-static struct bt_gatt_subscribe_params* subscribe_parameters;
+struct target {
+    int service_uuid;
+    int characteristic_uuid;
+    scan_cb scancb;
+    struct bt_uuid_16 uuid;
+    struct bt_gatt_discover_params* discover_parameters;
+    struct bt_gatt_subscribe_params* subscribe_parameters;
+};
+
+int eqParams(struct target* t, struct bt_gatt_discover_params* params) {
+    return t->discover_parameters == params;
+}
+
+K_MUTEX_DEFINE(targets_lock);
+struct node* targets;
+
+void insert_into_targets(struct target* t) {
+    k_mutex_lock(&targets_lock, K_FOREVER);
+    struct node* new = k_malloc(sizeof(struct target));
+    new->data = t;
+
+    struct node* list = targets;
+    
+    if(!list) {
+        targets = new;
+    } else {
+        while(list->next) {
+            list = list->next;
+        }
+	list->next = new;
+    }
+    k_mutex_unlock(&targets_lock);
+}
+
+void remove_from_targets(struct bt_gatt_discover_params* params) {
+    k_mutex_lock(&targets_lock, K_FOREVER);
+    struct node* list = targets;
+
+    if(targets && eqParams(targets->data, params)) {
+        struct node* old = targets;
+        struct target* t = targets->data;
+
+	targets = targets->next;
+	k_free(old);
+	k_free(t);
+    } else if(targets) {
+        while(list->next) {
+            if(eqParams(list->next->data, params)) {
+                struct node* old = list->next;
+		struct target* t = list->next->data;
+
+		list->next = list->next->next;
+		k_free(old);
+		k_free(t);
+		break;
+	    }
+	}
+	list = list->next;
+    }
+    k_mutex_unlock(&targets_lock);
+}
+
+struct target* find_target(struct bt_gatt_discover_params* params) {
+    k_mutex_lock(&targets_lock, K_FOREVER);
+    struct target* res = NULL;
+
+    struct node* tgs = targets;
+    while(tgs) {
+        struct target* t = tgs->data;
+        if(t->discover_parameters == params) {
+            res = t;
+	    break;
+	}
+	tgs = tgs->next;
+    }
+    k_mutex_unlock(&targets_lock);
+    return res;
+}
 
 static u8_t characteristic_found(struct bt_conn* conn,
 		                 const struct bt_gatt_attr* attr,
@@ -95,38 +172,40 @@ static u8_t characteristic_found(struct bt_conn* conn,
 
     printk("[ATTRIBUTE] handle %u\n", attr->handle);
 
-    if(!bt_uuid_cmp(params->uuid, BT_UUID_DECLARE_16(service_uuid))) {
+    struct target* target = find_target(params);
+
+    if(!bt_uuid_cmp(params->uuid, BT_UUID_DECLARE_16(target->service_uuid))) {
 	struct bt_gatt_service_val* serv = attr->user_data;
-        memcpy(&uuid, BT_UUID_DECLARE_16(characteristic_uuid), sizeof(uuid));
-	discover_parameters->uuid = &uuid.uuid;
-	discover_parameters->start_handle = attr->handle + 1;
-	discover_parameters->end_handle = serv->end_handle;
-	discover_parameters->type = BT_GATT_DISCOVER_CHARACTERISTIC;
+        memcpy(&target->uuid, BT_UUID_DECLARE_16(target->characteristic_uuid), sizeof(target->uuid));
+	target->discover_parameters->uuid = &target->uuid.uuid;
+	target->discover_parameters->start_handle = attr->handle + 1;
+	target->discover_parameters->end_handle = serv->end_handle;
+	target->discover_parameters->type = BT_GATT_DISCOVER_CHARACTERISTIC;
 
-	bt_gatt_discover(conn, discover_parameters);
-    } else if(!bt_uuid_cmp(params->uuid, BT_UUID_DECLARE_16(characteristic_uuid))) {
-        memcpy(&uuid, BT_UUID_GATT_CCC, sizeof(uuid));
-	discover_parameters->uuid = &uuid.uuid;
-	discover_parameters->start_handle = attr->handle + 2;
-	discover_parameters->type = BT_GATT_DISCOVER_DESCRIPTOR;
-	subscribe_parameters->value_handle = bt_gatt_attr_value_handle(attr);
+	bt_gatt_discover(conn, target->discover_parameters);
+    } else if(!bt_uuid_cmp(params->uuid, BT_UUID_DECLARE_16(target->characteristic_uuid))) {
+        memcpy(&target->uuid, BT_UUID_GATT_CCC, sizeof(target->uuid));
+	target->discover_parameters->uuid = &target->uuid.uuid;
+	target->discover_parameters->start_handle = attr->handle + 2;
+	target->discover_parameters->type = BT_GATT_DISCOVER_DESCRIPTOR;
+	target->subscribe_parameters->value_handle = bt_gatt_attr_value_handle(attr);
 
-	bt_gatt_discover(conn, discover_parameters);
+	bt_gatt_discover(conn, target->discover_parameters);
     } else {
-	subscribe_parameters->value = BT_GATT_CCC_NOTIFY;
-	subscribe_parameters->ccc_handle = attr->handle;
+	target->subscribe_parameters->value = BT_GATT_CCC_NOTIFY;
+	target->subscribe_parameters->ccc_handle = attr->handle;
 
         printk("Discovery complete\n");
 	struct value* val = k_malloc(sizeof(struct value));
 
-	val->service_uuid          = service_uuid;
-	val->characteristic_uuid   = characteristic_uuid;
-	val->characteristic_handle = subscribe_parameters->value_handle;
-	val->discover_params       = (void*)discover_parameters;
-	val->subscribe_params      = (void*)subscribe_parameters;
-	if(scancb) {
-            scancb(val);
+	val->service_uuid          = target->service_uuid;
+	val->characteristic_uuid   = target->characteristic_uuid;
+	val->characteristic_handle = target->subscribe_parameters->value_handle;
+	val->subscribe_params      = (void*)target->subscribe_parameters;
+	if(target->scancb) {
+            (target->scancb)(val);
 	}
+	remove_from_targets(params);
 
 	return BT_GATT_ITER_STOP;
     }
@@ -134,36 +213,35 @@ static u8_t characteristic_found(struct bt_conn* conn,
 }
 
 void scan_for_characteristic(struct conn* conn, int service_in_hex, int characteristic_in_hex, scan_cb cb) {
-    service_uuid = service_in_hex;
-    characteristic_uuid = characteristic_in_hex;
-    scancb = cb;
+    struct target* t = k_malloc(sizeof(struct target));
+    t->service_uuid = service_in_hex;
+    t->characteristic_uuid = characteristic_in_hex;
+    t->scancb = cb;
 
+    t->uuid.uuid.type = 0;
+    t->uuid.val = 0;
+	
     struct bt_gatt_discover_params* params = k_malloc(sizeof(struct bt_gatt_discover_params));
-    memcpy(&uuid, BT_UUID_DECLARE_16(service_uuid), sizeof(uuid));
-    params->uuid = &uuid.uuid;
+    memcpy(&(t->uuid), BT_UUID_DECLARE_16(t->service_uuid), sizeof(t->uuid));
+    params->uuid = &(t->uuid.uuid);
     params->func = characteristic_found;
     params->start_handle = 0x0001;
     params->end_handle = 0xffff;
     params->type = BT_GATT_DISCOVER_PRIMARY;
-    discover_parameters = params;
+    t->discover_parameters = params;
 
     struct bt_gatt_subscribe_params* subscribe_params = k_malloc(sizeof(struct bt_gatt_subscribe_params));
-    subscribe_parameters = subscribe_params;
+    t->subscribe_parameters = subscribe_params;
 
-    bt_gatt_discover(get_conn(conn->key), params);
-}
-
+    insert_into_targets(t);
+    bt_gatt_discover(get_conn(conn->key), t->discover_parameters);
+}    
 /*********************************************/
 /********** Subscription management **********/
 struct callback {
     subscribed_cb* cb;
     struct bt_conn* conn;
     struct value* value;
-};
-
-struct node {
-    void* data;
-    struct node* next;
 };
 
 struct node* callbacks;

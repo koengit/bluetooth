@@ -98,13 +98,13 @@ void scanned_cb(struct value* val) {
     printk("Scan callback was invoked!\n");
     vall = val;
     subscribe_characteristic(conn, val, subscribe_octavius);
-    scan_for_characteristic(conn, 0xff11, 0xff12, scanned_cb2);
 }
 
 void connected(struct conn* id) {
     conn = id;
     printk("Just connected, it got ID: %d\n", id->key);
     scan_for_characteristic(id, 0xff21, 0xff22, scanned_cb);
+    scan_for_characteristic(conn, 0xff11, 0xff12, scanned_cb2);
 }
 
 void disconnected(struct conn* id) {
