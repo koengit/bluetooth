@@ -21,6 +21,7 @@
 
 #include "api.h"
 #include "stack.h"
+#include "list.h"
 
 #define MAX_CONNECTIONS 5
 
@@ -214,12 +215,6 @@ void delete_callback(struct conn* connection, struct value* val) {
     }
 }
 
-void insert_vallback2(struct node* list, void* buf) {
-    if(!(*list).data) {
-        
-    }
-}
-
 void insert_callback(struct callback* cb) {
     struct node* new = (struct node*) k_malloc(sizeof(struct node));
     new->data = cb;
@@ -279,6 +274,7 @@ int unsubscribe_characteristic(struct conn* connection, struct value* val) {
     struct bt_gatt_subscribe_params* params = val->subscribe_params;
 
     delete_callback(connection, val);
+
     int err = bt_gatt_unsubscribe(conn, params);
 
     if(err) {
