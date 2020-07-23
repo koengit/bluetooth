@@ -5,7 +5,7 @@
 /* misc */
 void start_bt();
 
-/* Connection management */
+/* Connection management, don't want to expose the Zephyr structures. */
 struct conn {
     int key;
 };
@@ -21,6 +21,16 @@ void unregister_disconnected_callback();
 void try_connect(int uuid_in_hex);
 
 /* Characteristic management */
+/*
+ * The connection object and subscribe parameters are void*
+ * so that this API does not need to expose Zephyr structures.
+ *
+ * The intention is that a value object can be used to access
+ * a value at a remote device. Right now a value object can be
+ * used to subscribe to a value, but it should be possible to
+ * alter it to also allow read and writes to that object.
+ *
+ */
 struct value {
     int service_uuid;
     int characteristic_uuid;

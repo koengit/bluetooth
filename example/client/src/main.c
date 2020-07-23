@@ -1,7 +1,14 @@
-
 #include "api.h"
 #include <sys/printk.h>
 #include <zephyr.h>
+
+#define DEVICE                             0xffcc
+
+#define TEMPERATURE_SENSOR_SERVICE         0xff11
+#define TEMPERATURE_SENSOR_CHARACTERISTIC  0xff12
+
+#define OCTAVIUS_SERVICE                   0xff21
+#define OCTAVIUS_CHARACTERISTIC            0xff22
 
 /********************/
 struct blexa_mem
@@ -69,34 +76,34 @@ int func(int temp, int door) {
 void subscribe_temperature(const void* buf, int len) {
     int* input = (int*) buf;
     func(*input, 0);
-    //int x = blexa_step(main_mem, *input, 0);
 }
 
 void subscribe_octavius(const void* buf, int len) {
     int* input = (int*) buf;
     func(-273, (*input) + 1);
-    //int x = blexa_step(main_mem, -273, (*input) + 1);
 }
 
-void scanned_cb2(struct value* val) {
-    printk("Scan callback 2 was invoked!\n");
+void scanned_temperature_callback(struct value* val) {
     subscribe_characteristic(val, subscribe_temperature);
 }
 
-void scanned_cb(struct value* val) {
-    printk("Scan callback was invoked!\n");
+void scanned_octavius_callback(struct value* val) {
     subscribe_characteristic(val, subscribe_octavius);
 }
 
 void connected(struct conn* id) {
-    printk("Just connected, it got ID: %d\n", id->key);
-    scan_for_characteristic(id, 0xff21, 0xff22, scanned_cb);
-    scan_for_characteristic(id, 0xff11, 0xff12, scanned_cb2);
+    scan_for_characteristic(id,
+		            OCTAVIUS_SERVICE, 
+			    OCTAVIUS_CHARACTERISTIC, 
+			    scanned_octavius_callback);
+    scan_for_characteristic(id,
+		            TEMPERATURE_SENSOR_SERVICE, 
+			    TEMPERATURE_SENSOR_CHARACTERISTIC, 
+			    scanned_temperature_callback);
 }
 
 void disconnected(struct conn* id) {
-    printk("Just disconnected, it had ID: %d\n", id->key);
-    try_connect(0xffcc);
+    try_connect(DEVICE);
 }
 
 void main() {
@@ -106,6 +113,6 @@ void main() {
     start_bt();
     register_connected_callback(connected);
     register_disconnected_callback(disconnected);
-    try_connect(0xffcc);
+    try_connect(DEVICE);
 }
 

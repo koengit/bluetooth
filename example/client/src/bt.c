@@ -22,15 +22,8 @@
 #include "api.h"
 #include "stack.h"
 
+// concurrent connections
 #define MAX_CONNECTIONS 5
-
-#define BT_UUID_DEVICE                             BT_UUID_DECLARE_16(0xffcc)
-
-#define BT_UUID_TEMPERATURE_SENSOR_SERVICE         BT_UUID_DECLARE_16(0xff11)
-#define BT_UUID_TEMPERATURE_SENSOR_CHARACTERISTIC  BT_UUID_DECLARE_16(0xff12)
-
-#define BT_UUID_OCTAVIUS_SERVICE                   BT_UUID_DECLARE_16(0xff21)
-#define BT_UUID_OCTAVIUS_CHARACTERISTIC            BT_UUID_DECLARE_16(0xff22)
 
 struct node {
     void* data;
@@ -38,19 +31,34 @@ struct node {
 };
 
 /*********** Connection management ***********/
+/* Ideally when we establish a connection we'd just allocate the resources
+ * required, when we need them, and put them away in a list or something.
+ * However, Zephyr requires that the connection object struct bt_conn be
+ * allocated at compile time. This is the reason for keeping an array of
+ * conveniently sized elements around, and a stack (pile) of 'free' array
+ * indexes, indicating that the connection objects associated with those indexes
+ * are free to use, meaning they are not bound to a remote device.
+ *
+ * When you want to establish a connection:
+ *   * Get a free slot
+ *   * Get the connection object in that slot
+ *   * Use it as you see fit
+ *
+ * When a connection is broken:
+ *   * Get the key associated with the connection object (the disconnection
+ *   callback will have been given a connection object).
+ *   * Recycle the connection object by invoking 'recycle_key', which will
+ *   assign NULL to the now invalid connection object and put the index back
+ *   in the stack of free indexes.
+ *
+ *   NOTE: There are two types; struct bt_conn and struct conn. bt_conn is
+ *   a Zephyr type while struct conn is a type exposed through our new API.
+ *   It does not reveal any zephyr implementation details.
+ */
+
 struct stack* stack;
 struct bt_conn* conns[MAX_CONNECTIONS];
 struct conn* apiconns[MAX_CONNECTIONS];
-
-int set_conn(struct bt_conn* conn) {
-    int index = pop(stack);
-    if(index != -1) {
-        conns[index] = conn;
-	return index;
-    } else {
-        return -1;
-    }
-}
 
 int get_slot() {
     return pop(stack);
@@ -82,6 +90,26 @@ void recycle_key(int key) {
     push(stack, key);
 }
 /*********************************************/
+/*
+ * When you scan for a characteristic the intention is that you get a value back
+ * which can be used to initiate communication and/or subscribe events.
+ * While the search is taking place, a struct target object is created to
+ * keep track of what we are looking for. As we find more and more information
+ * about the remote device we update the discovery & subscription parameters.
+ *
+ * To scan for more than 1 characteristic simultaneously we keep a list of
+ * targets. The discovery callback knows which discover parameters were used
+ * to scan, which we can use to uniquely identify the right target in the list.
+ *
+ * When we found every piece of information required we deallocate the
+ * struct target, but place the subscribe parameters and some other information
+ * in a struct value* object that is passed back through to the caller via the
+ * scan callback, found in the target struct.
+ *
+ * Scanning for a characteristic only probes the remote device. It does not
+ * send or read the characteristic in question. These things can be done through
+ * the API by using the struct value object.
+ */
 
 struct target {
     int service_uuid;
@@ -239,15 +267,28 @@ void scan_for_characteristic(struct conn* conn, int service_in_hex, int characte
 }    
 /*********************************************/
 /********** Subscription management **********/
+/*
+ * Currently there is a global callback function that is registered as the
+ * callback for every characteristic you subscribe to. When this callback is
+ * invoked the callback will use the connection & subscription parameters to
+ * uniquely identify and fetch the application callback code to run.
+ *
+ * TODO The _single_ callback registered to a characteristic should probably
+ * be a list of such callback functions instead. We should not be limited in
+ * the number of callbacks we can register.
+ */
+
 struct callback {
     subscribed_cb* cb;
     struct bt_conn* conn;
     struct value* value;
 };
 
+K_MUTEX_DEFINE(callbacks_lock);
 struct node* callbacks;
 
 subscribed_cb* find_callback(struct bt_conn* conn, struct bt_gatt_subscribe_params* params) {
+    k_mutex_lock(&callbacks_lock, K_FOREVER);
     subscribed_cb* res = NULL;
 
     struct node* cbs = callbacks;
@@ -259,10 +300,12 @@ subscribed_cb* find_callback(struct bt_conn* conn, struct bt_gatt_subscribe_para
 	}
         cbs = cbs->next;
     }
+    k_mutex_unlock(&callbacks_lock);
     return res;
 }
 
 void delete_callback(struct value* val) {
+    k_mutex_lock(&callbacks_lock, K_FOREVER);
     struct bt_conn* conn = val->conn;
 
     struct node* cbs = callbacks;
@@ -275,10 +318,7 @@ void delete_callback(struct value* val) {
 	    k_free(n);
 	    callbacks = cbs;
 	}
-    } else if(!cbs) {
-        // No callback registered, nothing to unsubscribe
-	return;
-    } else {
+    } else if(cbs) {
         while(cbs) {
 	    struct node* next_n = cbs->next;
             struct callback* next_cb = next_n->data;
@@ -286,14 +326,17 @@ void delete_callback(struct value* val) {
                 cbs->next = cbs->next->next;
 		k_free(next_cb);
 		k_free(next_n);
+                k_mutex_unlock(&callbacks_lock);
 		return;
 	    }
 	    cbs = next_n;
         }
     }
+    k_mutex_unlock(&callbacks_lock);
 }
 
 void insert_callback(struct callback* cb) {
+    k_mutex_lock(&callbacks_lock, K_FOREVER);
     struct node* new = (struct node*) k_malloc(sizeof(struct node));
     new->data = cb;
 
@@ -307,6 +350,7 @@ void insert_callback(struct callback* cb) {
 	cbs->next = new;
     }
     callbacks = cbs;
+    k_mutex_unlock(&callbacks_lock);
 }
 
 static u8_t global_callback(struct bt_conn* conn, struct bt_gatt_subscribe_params* params, const void* data, u16_t length) {
@@ -363,6 +407,11 @@ int unsubscribe_characteristic(struct value* val) {
 }
 
 /*********************************************/
+// TODO When I have another board so that I can test it, I'd like to rewrite this
+/* using the same trick as with characteristic scanning, keeping current scans
+ * in a list, thus enabling the user to issue connection events to more than one
+ * device at a time.
+ */
 
 static int target;
 static int target_key;
